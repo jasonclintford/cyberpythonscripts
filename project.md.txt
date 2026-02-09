@@ -1,0 +1,418 @@
+# Codex build spec: CyberKit (Python cybersecurity utility suite)
+
+## Goal
+Generate a production-quality Git repository containing **many small, elegant Python scripts** for **defensive security and authorised security assessment** workflows on Linux systems that already have common security utilities installed (for example Kali Linux or BackBox).
+
+The repo must include:
+- A **beautiful, ergonomic CLI** that lets a user browse, search, and run the scripts.
+- Scripts that remain **independently runnable** (each script can be executed directly).
+- A clean, well-categorised folder structure.
+- Strong engineering quality: typing, linting, tests for parsing logic, clear docs, safe defaults.
+
+## Safety and scope constraints (non-negotiable)
+Build **defensive, auditing, and authorised assessment** utilities.
+
+Do NOT implement:
+- Password cracking, credential stuffing, brute-force automation, or wordlist generation aimed at account compromise.
+- Exploit generation, payload creation, backdoors, persistence tooling, or phishing/social engineering automation.
+- Anything that meaningfully lowers the barrier for unauthorised intrusion.
+
+Allowed:
+- Inventory, visibility, configuration audits, log analysis, packet capture summarisation, vulnerability intelligence lookups, compliance checks, and “wrap common tools and produce clean reports” workflows.
+- Network scanning wrappers (for example nmap) ONLY framed and implemented as authorised assessment utilities with safe defaults.
+
+Every command must print an explicit reminder in help text: “Use only on systems you own or have explicit permission to test.”
+
+## Tech choices
+- Language: Python (target 3.10+).
+- CLI framework: **Typer** for subcommands and help UX.
+- Terminal UI: **Rich** for tables, panels, progress bars, and consistent styling.
+- Prefer standard library; keep dependencies minimal.
+
+Dependencies (in `pyproject.toml`):
+- typer
+- rich
+
+Optional extras (only if genuinely needed and gated):
+- pyyaml (only if you choose YAML manifests instead of TOML/JSON)
+- requests (only for OSINT style lookups, and always optional)
+- beautifulsoup4 (only if you choose to parse HTML)
+Keep “optional extras” in extras groups.
+
+## Repo name and structure
+Repo name: `cyberkit`
+
+Top-level tree:
+
+- `cyberkit/` (installable package)
+  - `__init__.py`
+  - `cli.py` (Typer entry point)
+  - `registry.py` (tool discovery and metadata)
+  - `ui/` (Rich helpers)
+    - `console.py`
+    - `theme.py`
+    - `renderers.py` (tables/panels/trees)
+  - `core/` (shared utilities)
+    - `exec.py` (safe subprocess runner with timeouts)
+    - `paths.py`
+    - `io.py` (read/write JSON, line logs, etc)
+    - `validators.py` (CIDR, hostnames, URLs)
+    - `toolcheck.py` (which(), version probing)
+    - `logging.py`
+    - `reporting.py` (report folder handling, timestamps)
+- `tools/` (each tool is a module, still runnable)
+  - `information_gathering/`
+  - `network_scanning/`
+  - `web_audit/`
+  - `dns_email/`
+  - `host_hardening/`
+  - `logs_monitoring/`
+  - `forensics/`
+  - `malware_triage/`
+  - `crypto_pki/`
+  - `containers_cloud/`
+  - `reporting/`
+  - `misc/`
+- `docs/`
+  - `README.md` (main)
+  - `usage.md` (how to use CLI and run standalone)
+  - `playbooks/` (end-to-end workflows)
+  - `tool-catalogue.md` (generated catalogue)
+- `tests/` (unit tests)
+- `scripts/` (dev scripts, release automation)
+- `.github/workflows/` (CI: lint + tests)
+- `pyproject.toml`
+- `LICENSE` (MIT or Apache-2.0)
+- `CHANGELOG.md`
+
+### Tool module layout rules
+Each tool is a single Python file in a category folder, for example:
+`tools/network_scanning/nmap_quick.py`
+
+Each tool must:
+- be runnable as `python tools/<category>/<tool>.py ...`
+- also be runnable via installed CLI: `cyberkit run <tool-id> ...`
+
+## Metadata and discovery
+Implement a lightweight registry.
+
+Each tool module must expose:
+- `TOOL_META: dict` with:
+  - `id` (unique string, kebab-case, for example `nmap-quick`)
+  - `name`
+  - `category`
+  - `summary` (one line)
+  - `risk` (low, medium) where medium means it can generate traffic or touch endpoints
+  - `requires` (list of external commands, for example `["nmap"]`)
+  - `supports_json` (bool)
+  - `default_output` (relative path under `reports/`)
+- `main(argv: list[str] | None = None) -> int`
+
+Discovery:
+- `cyberkit.registry` recursively finds `tools/**.py`, imports modules safely, reads `TOOL_META`.
+- `cyberkit list` prints catalogue grouped by category.
+- `cyberkit search <keyword>` searches id/name/summary/tags.
+- `cyberkit info <tool-id>` prints requirements, examples, and output details.
+
+## CLI UX requirements (make it attractive)
+Use Rich heavily:
+- On `cyberkit` start, show a small banner panel and a short safety notice.
+- Render categories as a Rich Tree.
+- Render tool lists as Rich tables with columns: id, name, risk, requires, summary.
+- Provide progress bars for long operations when feasible.
+
+CLI commands:
+- `cyberkit doctor`:
+  - checks python version, OS, permissions
+  - checks presence of common external utilities
+  - prints a capability matrix (tool -> installed yes/no -> version)
+- `cyberkit browse`:
+  - interactive category selection (simple numeric prompts are fine)
+  - then tool selection
+  - then runs tool with a guided prompt for common arguments
+- `cyberkit list [--category ...] [--risk ...]`
+- `cyberkit search <query>`
+- `cyberkit info <tool-id>`
+- `cyberkit run <tool-id> [--] <args...>`:
+  - passes through args to the underlying tool module
+  - always supports `--json` if the tool supports JSON
+- `cyberkit report open <run-id>`:
+  - prints report paths and a short summary
+- `cyberkit update-catalogue`:
+  - regenerates `docs/tool-catalogue.md` from registry
+
+Output conventions:
+- All tools write outputs under `reports/<tool-id>/<timestamp>/`
+- Each run writes:
+  - `run.json` (metadata: tool id, args, host, timestamps, versions)
+  - `stdout.log` and `stderr.log` when calling external tools
+  - tool-specific result file(s)
+
+## Subprocess runner requirements
+Centralise all external command execution in `cyberkit.core.exec`.
+Features:
+- `run(cmd: list[str], timeout: int, cwd: Path | None, env: dict | None) -> Completed`
+- Captures stdout/stderr, supports streaming to log file.
+- Provides timeouts and clear error reporting.
+- Never uses `shell=True`.
+- For tools requiring elevated permissions, detect and instruct, but do not auto-sudo unless user supplies `--allow-sudo`.
+
+## Coding standards
+- Type hints everywhere.
+- Linting: ruff (or flake8) and formatting (black).
+- Tests: pytest.
+- Add `pre-commit` config if time permits.
+- Document every tool with:
+  - purpose
+  - inputs and examples
+  - output files
+  - external dependencies
+
+## Tool catalogue (implement as many as possible)
+Implement the following tools. If time is limited, implement at least the first 40 fully and create well-structured stubs for the rest with correct metadata and help text.
+
+### Category: information_gathering
+1. `host-resolve`  
+   Resolve A/AAAA for hostnames, optionally via multiple resolvers.
+2. `reverse-dns-sweep`  
+   Reverse lookup for an IP list or CIDR (rate-limited).
+3. `whois-summary`  
+   WHOIS query with parsed summary (registrar, dates, nameservers).
+4. `asn-lookup`  
+   Map IP to ASN using available local tools or optional web API (gated).
+5. `local-net-inventory`  
+   Collect local interfaces, routes, DNS, ARP, open listening sockets (ss).
+6. `arp-table-audit`  
+   Snapshot ARP, flag duplicates, vendor lookup if `get-oui` exists.
+7. `service-banner-grab`  
+   Safe TCP connect banner grab for common ports (timeouts).
+8. `http-probe`  
+   Probe URLs, follow redirects, capture status, server header, title.
+9. `subdomain-cert-transparency` (optional web)  
+   Query crt.sh style endpoint if internet available, otherwise skip.
+10. `ssh-known-hosts-audit`  
+   Parse known_hosts, detect weak key types, duplicate entries.
+
+### Category: network_scanning
+1. `nmap-quick`  
+   Wrapper for fast top-ports scan with safe defaults.
+2. `nmap-service-enum`  
+   Service/version detection with controlled timing.
+3. `nmap-to-json`  
+   Convert nmap XML to JSON summary (ports, services, scripts output).
+4. `port-diff`  
+   Diff two scan outputs to highlight changes.
+5. `tcp-connect-scan`  
+   Pure Python connect scan for small scopes.
+6. `udp-lite-check`  
+   Small UDP checks for DNS/NTP/SNMP presence (non-invasive).
+7. `traceroute-report`  
+   Run traceroute/mtr and summarise hops and RTT stats.
+8. `mtu-path-check`  
+   PMTU style check using ping with DF when possible.
+9. `pcap-snapshot`  
+   Short tcpdump capture with safe filters and timestamps.
+10. `pcap-summary`  
+   Use tshark to summarise conversations, top talkers, protocols.
+
+### Category: web_audit
+1. `http-security-headers`  
+   Check HSTS, CSP, XFO, XCTO, referrer-policy, permissions-policy.
+2. `tls-cert-inspect`  
+   Pull server cert chain, parse expiry, SANs, key size.
+3. `tls-config-wrapper`  
+   Wrapper around `sslscan` or `testssl.sh` if present, parse key findings.
+4. `robots-sitemap-fetch`  
+   Fetch robots.txt, sitemap URLs, list discovered paths.
+5. `content-discovery-lite`  
+   Non-aggressive path checks from a small safe list, rate-limited.
+6. `cookie-audit`  
+   Check Secure, HttpOnly, SameSite flags on set-cookie.
+7. `http-methods-check`  
+   OPTIONS and method probing with safe limits.
+8. `web-tech-fingerprint`  
+   Basic fingerprint from headers, HTML markers, favicons hash (optional).
+9. `redirect-chain-report`  
+   Show redirect hops and final destination.
+10. `openapi-discovery`  
+   Attempt to locate swagger/openapi endpoints by conventional paths (safe list).
+
+### Category: dns_email
+1. `dns-records-snapshot`  
+   Collect A/AAAA/CNAME/MX/TXT/NS and output JSON.
+2. `spf-check`  
+   Parse SPF, summarise mechanisms, flag `+all` risks.
+3. `dmarc-check`  
+   Parse DMARC policy, report URIs, alignment flags.
+4. `dkim-selector-check`  
+   Check common selectors exist, output status.
+5. `dnssec-check`  
+   Validate DNSSEC presence (DS, RRSIG) using `dig +dnssec` if available.
+6. `mx-health`  
+   Check MX hosts resolve, port 25 reachable (connect only), STARTTLS advert.
+7. `domain-typo-monitor` (defensive)  
+   Generate minimal safe variants and check if they resolve, clearly gated and rate-limited.
+
+### Category: host_hardening
+1. `ssh-config-audit`  
+   Audit sshd_config for insecure options and provide recommendations.
+2. `sudoers-audit`  
+   Identify NOPASSWD and risky ALL rules (read-only).
+3. `world-writable-finder`  
+   Find world-writable files in user-specified paths, with exclusions.
+4. `suid-sgid-finder`  
+   List SUID/SGID binaries and compare against a baseline file.
+5. `listening-services-audit`  
+   Summarise listening ports and owning processes.
+6. `firewall-status-audit`  
+   Detect nftables/iptables/ufw status and summarise rules count and defaults.
+7. `user-account-audit`  
+   Local users, shell access, last login, locked accounts.
+8. `cron-audit`  
+   Enumerate cron jobs, permissions, and writable paths.
+9. `kernel-params-audit`  
+   Read sysctl, flag common risky settings.
+10. `file-integrity-baseline`  
+   Create and verify a hash baseline for chosen directories.
+
+### Category: logs_monitoring
+1. `auth-log-failed-logins`  
+   Parse auth logs, summarise failed SSH logins by IP/user.
+2. `auth-log-success-logins`  
+   Summarise successful logins, unusual times, new IPs.
+3. `sudo-usage-report`  
+   Extract sudo usage events and summarise.
+4. `apache-access-summary`  
+   Top endpoints, status codes, user agents, suspicious patterns.
+5. `nginx-access-summary`  
+   Same as above, tuned for nginx formats.
+6. `journalctl-export`  
+   Export a bounded set of systemd logs to a report folder.
+7. `ioc-grep`  
+   Search logs for IP/domain/hash indicators from a provided list.
+8. `systemd-failed-units`  
+   Report failed services and last error lines.
+9. `resource-spikes`  
+   Parse sysstat/vmstat outputs if present, summarise spikes.
+
+### Category: forensics
+1. `hash-file`  
+   SHA256/SHA1/MD5 for a file with metadata.
+2. `hash-tree`  
+   Hash directory tree deterministically, create manifest.
+3. `exif-extract`  
+   Use `exiftool` if available, otherwise limited metadata extraction.
+4. `pdf-metadata`  
+   Extract PDF metadata and basic structure hints (no exploit content).
+5. `office-triage`  
+   If oletools present, run safe indicators extraction and summarise.
+6. `disk-image-verify`  
+   Verify image hashes, capture tool versions, create chain-of-custody note.
+7. `strings-plus`  
+   Extract strings with context, entropy hints, suspicious keywords.
+8. `timeline-lite`  
+   Generate a filesystem timeline (mtime/ctime/atime) for a directory.
+9. `pcap-ioc-extract`  
+   Extract DNS queries, SNI, HTTP hosts (tshark) for investigation.
+
+### Category: malware_triage
+1. `yara-scan`  
+   Run YARA rules against a file tree, summarise hits.
+2. `pe-header-report`  
+   If `pefile` optional extra is installed, parse PE header, else skip.
+3. `elf-header-report`  
+   Use `readelf` if available, summarise sections and imports.
+4. `file-entropy`  
+   Compute Shannon entropy to flag packed or encrypted blobs.
+5. `suspicious-imports`  
+   Identify suspicious imports from PE/ELF when parsers exist.
+6. `sandbox-package`  
+   Create a safe submission bundle (hashes + metadata), no auto-upload.
+
+### Category: crypto_pki
+1. `cert-expiry-scan`  
+   Check many hosts for cert expiry windows and output CSV/JSON.
+2. `ssh-key-audit`  
+   Audit local SSH keys: types, sizes, permissions.
+3. `jwt-inspect`  
+   Decode JWT header/payload without verifying, flag `alg=none` and weak patterns.
+4. `tls-cipher-hints`  
+   If sslscan/testssl exists, parse for deprecated protocols and ciphers.
+5. `pgp-key-inventory`  
+   List GPG keys, expiry, trust, and fingerprints.
+6. `hash-identify`  
+   Heuristic identify hash types from string length/pattern (defensive utility).
+
+### Category: containers_cloud
+1. `docker-socket-risk`  
+   Detect docker socket exposure and group membership risk.
+2. `docker-image-inventory`  
+   List images, tags, creation dates, sizes.
+3. `container-runtime-check`  
+   Detect docker/podman/containerd, summarise status.
+4. `trivy-wrapper`  
+   If trivy exists, scan image or filesystem and parse top findings.
+5. `kubeconfig-audit`  
+   Parse kubeconfig file permissions and contexts (no cluster actions).
+6. `sbom-generate`  
+   If syft exists, generate SBOM and store in report folder.
+
+### Category: reporting
+1. `report-init`  
+   Create a new case folder with metadata and notes template.
+2. `report-md`  
+   Convert JSON results into a clean markdown report.
+3. `report-html` (optional)  
+   Generate a simple self-contained HTML report from run.json + results.
+4. `baseline-compare`  
+   Compare two baselines (hash-tree outputs, port scans) and summarise.
+5. `evidence-packager`  
+   Zip a case folder with manifest and checksums.
+
+### Category: misc
+1. `tool-versions`  
+   Print versions of common utilities (nmap, openssl, tshark, etc).
+2. `public-ip` (optional web)  
+   Fetch public IP from a simple endpoint, optional.
+3. `time-sync-check`  
+   NTP/chrony status and drift summary.
+4. `dns-resolver-health`  
+   Test resolvers for latency and correctness on known domains.
+5. `safe-download-hash`  
+   Download a file only if URL allowlisted, then hash and store metadata.
+
+## Documentation deliverables
+- `README.md`:
+  - install via pipx or pip
+  - examples for `doctor`, `browse`, `run`
+  - safety statement
+- `docs/playbooks/`:
+  - `new-host-audit.md`
+  - `web-endpoint-audit.md`
+  - `incident-triage-lite.md`
+- `docs/tool-catalogue.md` is generated from registry.
+
+## CI requirements
+GitHub Actions:
+- Run lint (ruff) and tests (pytest) on push and PR.
+- Basic packaging check: `python -m build` (optional).
+
+## Acceptance checks (must pass)
+1. `pip install -e .` works.
+2. `cyberkit doctor` runs and prints a Rich table.
+3. `cyberkit list` shows categories and tools.
+4. `cyberkit browse` allows selecting and running a tool.
+5. At least 40 tools are fully implemented and produce outputs in `reports/...`.
+6. Every tool has:
+   - unique id
+   - `--help` with examples
+   - safe defaults and timeouts
+   - clear error messages when external deps are missing
+
+## Implementation notes
+- Prefer parsing machine-readable output when possible (for example nmap `-oX` then parse XML).
+- Always rate-limit network actions, include timeouts, and expose `--rate` or `--timeout`.
+- Add `--dry-run` for tools that call external commands.
+- Keep modules small and readable.
+
+Now implement the repository accordingly.

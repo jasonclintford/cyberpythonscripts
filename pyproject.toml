@@ -1,0 +1,53 @@
+[build-system]
+requires = ["setuptools>=69", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "cyberkit"
+version = "0.1.0"
+description = "Defensive security and authorised assessment utility suite."
+readme = "docs/README.md"
+requires-python = ">=3.10"
+license = "MIT"
+authors = [
+  { name = "CyberKit Contributors" }
+]
+dependencies = [
+  "typer>=0.12,<1.0",
+  "rich>=13,<15"
+]
+
+[project.optional-dependencies]
+web = [
+  "requests>=2.31,<3.0",
+  "beautifulsoup4>=4.12,<5.0"
+]
+yaml = [
+  "pyyaml>=6.0,<7.0"
+]
+malware = [
+  "pefile>=2023.2.7"
+]
+
+[project.scripts]
+cyberkit = "cyberkit.cli:app"
+
+[tool.setuptools]
+packages = ["cyberkit", "cyberkit.core", "cyberkit.ui"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+addopts = "-q"
+
+[tool.ruff]
+target-version = "py310"
+line-length = 100
+src = ["cyberkit", "tools", "tests"]
+
+[tool.ruff.lint]
+select = ["E", "F", "I", "UP", "B", "SIM"]
+ignore = ["E501", "SIM117"]
+
+[tool.black]
+line-length = 100
+target-version = ["py310"]
